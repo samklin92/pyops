@@ -18,6 +18,7 @@ A production-grade infrastructure monitoring tool built with Python, Boto3, and 
 
 ## Project Structure
 
+```
 infra/
 ├── config.py       — config loading
 ├── instance.py     — EC2Instance class
@@ -29,8 +30,10 @@ tests/
 api.py              — FastAPI REST API
 aws_monitor.py      — live AWS monitoring script
 main.py             — entry point
+```
 
 ## Setup
+
 ```bash
 python -m venv .venv
 .venv\Scripts\Activate.ps1
@@ -40,6 +43,7 @@ python main.py
 ```
 
 ## API Endpoints
+
 | Endpoint | Description |
 |---|---|
 | `GET /health` | API status |
