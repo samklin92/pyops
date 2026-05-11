@@ -1,0 +1,8 @@
+{
+    "environment": "production",
+    "region": "us-east-1",
+    "instance_type": "t3.micro",
+    "min_replicas": 2,
+    "max_replicas": 10,
+    "alert_threshold": 75
+}
