@@ -1,3 +1,4 @@
+from pydantic import BaseModel
 import boto3
 import logging
 import os
@@ -10,7 +11,7 @@ app = FastAPI(title="Infra Monitor API", version="1.0.0")
 
 # Load config once at startup
 config = load_config("config.json")
-BUCKET_NAME = "devops-monitor-109804294707"
+BUCKET_NAME = config["s3_bucket"]
 REGION = os.getenv("AWS_REGION", "us-east-1")
 
 
@@ -85,3 +86,26 @@ def latest_report():
     latest = sorted(reports, key=lambda x: x["last_modified"])[-1]
     content = reporter.download(latest["key"])
     return {"key": latest["key"], "content": content}
+
+    from pydantic import BaseModel
+from concurrent.futures import ThreadPoolExecutor
+from agent import run_agent
+
+executor = ThreadPoolExecutor(max_workers=2)
+
+class AgentQuery(BaseModel):
+    question: str
+
+@app.post("/agent/query")
+async def agent_query(payload: AgentQuery):
+    """Run the AI agent with a natural language infrastructure question."""
+    try:
+        loop = __import__("asyncio").get_event_loop()
+        result = await loop.run_in_executor(
+            executor,
+            run_agent,
+            payload.question
+        )
+        return {"question": payload.question, "answer": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

@@ -4,5 +4,6 @@
     "instance_type": "t3.micro",
     "min_replicas": 2,
     "max_replicas": 10,
-    "alert_threshold": 75
+    "alert_threshold": 75,
+    "s3_bucket": "pyops-infra-reports-109804294707"
 }
