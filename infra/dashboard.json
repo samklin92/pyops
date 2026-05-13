@@ -1,0 +1,48 @@
+{
+  "widgets": [
+    {
+      "type": "metric",
+      "x": 0, "y": 0, "width": 12, "height": 6,
+      "properties": {
+        "title": "ECS CPU Utilization",
+        "region": "us-east-1",
+        "metrics": [["AWS/ECS", "CPUUtilization", "ClusterName", "pyops-cluster", "ServiceName", "pyops-api-svc"]],
+        "period": 60, "stat": "Average", "view": "timeSeries",
+        "annotations": {"horizontal": [{"value": 80, "label": "Threshold", "color": "#ff0000"}]}
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12, "y": 0, "width": 12, "height": 6,
+      "properties": {
+        "title": "ECS Memory Utilization",
+        "region": "us-east-1",
+        "metrics": [["AWS/ECS", "MemoryUtilization", "ClusterName", "pyops-cluster", "ServiceName", "pyops-api-svc"]],
+        "period": 60, "stat": "Average", "view": "timeSeries",
+        "annotations": {"horizontal": [{"value": 80, "label": "Threshold", "color": "#ff0000"}]}
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0, "y": 6, "width": 12, "height": 6,
+      "properties": {
+        "title": "ALB 5xx Errors",
+        "region": "us-east-1",
+        "metrics": [["AWS/ApplicationELB", "HTTPCode_Target_5XX_Count", "LoadBalancer", "app/pyops-api-alb/dc0ca3f6ddf41d74"]],
+        "period": 60, "stat": "Sum", "view": "timeSeries",
+        "annotations": {"horizontal": [{"value": 5, "label": "Threshold", "color": "#ff0000"}]}
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12, "y": 6, "width": 12, "height": 6,
+      "properties": {
+        "title": "ALB Request Count",
+        "region": "us-east-1",
+        "metrics": [["AWS/ApplicationELB", "RequestCount", "LoadBalancer", "app/pyops-api-alb/dc0ca3f6ddf41d74"]],
+        "period": 60, "stat": "Sum", "view": "timeSeries",
+        "annotations": {"horizontal": []}
+      }
+    }
+  ]
+}

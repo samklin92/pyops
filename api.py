@@ -1,18 +1,20 @@
-from pydantic import BaseModel
 import boto3
 import logging
 import os
-import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone, timedelta
 from fastapi import FastAPI, HTTPException
-from infra import load_config, EC2Instance, InfraMonitor, S3Reporter
+from pydantic import BaseModel
+from infra import load_config, S3Reporter
+from agent import run_agent
 
 app = FastAPI(title="Infra Monitor API", version="1.0.0")
 
-# Load config once at startup
 config = load_config("config.json")
 BUCKET_NAME = config["s3_bucket"]
-REGION = os.getenv("AWS_REGION", "us-east-1")
+REGION = os.getenv("AWS_REGION", config["region"])
+
+executor = ThreadPoolExecutor(max_workers=2)
 
 
 def get_cpu_utilization(instance_id, region):
@@ -37,7 +39,6 @@ def fetch_ec2_instances(region):
     ec2 = boto3.client("ec2", region_name=region)
     response = ec2.describe_instances()
     instances = []
-
     for reservation in response["Reservations"]:
         for inst in reservation["Instances"]:
             if inst["State"]["Name"] == "terminated":
@@ -58,9 +59,11 @@ def fetch_ec2_instances(region):
 def health():
     return {"status": "ok", "version": "1.0.0"}
 
+
 @app.get("/")
 def root():
     return {"message": "Infra Monitor API is running"}
+
 
 @app.get("/instances")
 def list_instances():
@@ -69,6 +72,7 @@ def list_instances():
         raise HTTPException(status_code=404, detail="No instances found")
     return {"region": REGION, "count": len(instances), "instances": instances}
 
+
 @app.get("/reports")
 def list_reports():
     reporter = S3Reporter(bucket_name=BUCKET_NAME, region=REGION)
@@ -76,6 +80,7 @@ def list_reports():
     if not reports:
         raise HTTPException(status_code=404, detail="No reports found")
     return {"count": len(reports), "reports": reports}
+
 
 @app.get("/reports/latest")
 def latest_report():
@@ -87,14 +92,10 @@ def latest_report():
     content = reporter.download(latest["key"])
     return {"key": latest["key"], "content": content}
 
-    from pydantic import BaseModel
-from concurrent.futures import ThreadPoolExecutor
-from agent import run_agent
-
-executor = ThreadPoolExecutor(max_workers=2)
 
 class AgentQuery(BaseModel):
     question: str
+
 
 @app.post("/agent/query")
 async def agent_query(payload: AgentQuery):

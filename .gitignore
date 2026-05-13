@@ -8,3 +8,4 @@ monitor.log
 app.log
 report.txt
 output.txt
+.pytest_cache/

@@ -1,0 +1,29 @@
+{
+  "family": "pyops-api",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+  "executionRoleArn": "arn:aws:iam::109804294707:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "pyops-api",
+      "image": "109804294707.dkr.ecr.us-east-1.amazonaws.com/pyops-api:latest",
+      "portMappings": [
+        {
+          "containerPort": 8000,
+          "protocol": "tcp"
+        }
+      ],
+      "essential": true,
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/pyops-api",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}
