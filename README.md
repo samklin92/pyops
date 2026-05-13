@@ -4,14 +4,8 @@ A production-grade containerised FastAPI application deployed on AWS ECS Fargate
 
 ## Architecture
 
-```
-git push → GitHub Actions → ECR → ECS Fargate
-                                       ↓
-internet → api.samklin.online (HTTPS) → ALB → Target Group → ECS Task
-                                                                  ↓
-                                              CloudWatch Metrics → Dashboard
-                                                                → Alarms → SNS → Email
-```
+<img width="1536" height="1024" alt="aws cloud infrastructure" src="https://github.com/user-attachments/assets/4603f312-56f1-46ef-9a56-e89798ae73ba" />
+
 
 ## Stack
 
