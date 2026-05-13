@@ -1,203 +1,87 @@
-# PyOps — Python for DevOps Toolkit
+# PyOps API — Phase 1 Capstone
 
-A production-grade AI-powered infrastructure monitoring tool built with Python, Boto3, FastAPI, RAG, and an AI agent with tool calling.
+A production-grade containerised FastAPI application deployed on AWS ECS Fargate with a full CI/CD pipeline, HTTPS endpoint, and observability stack.
 
----
+## Architecture
 
-## What It Does
-
-- Monitors real AWS EC2 instances via Boto3
-- Pulls live CPU metrics from CloudWatch
-- Stores timestamped reports in S3
-- Exposes infrastructure data via a REST API (FastAPI)
-- Searches operations runbooks using RAG (ChromaDB + sentence transformers)
-- Runs an AI agent that autonomously analyses infrastructure and generates remediation plans
-- Full pytest test suite
-
----
+```
+git push → GitHub Actions → ECR → ECS Fargate
+                                       ↓
+internet → api.samklin.online (HTTPS) → ALB → Target Group → ECS Task
+                                                                  ↓
+                                              CloudWatch Metrics → Dashboard
+                                                                → Alarms → SNS → Email
+```
 
 ## Stack
 
 | Layer | Technology |
-|-------|-----------|
-| Language | Python 3.14 |
-| AWS | Boto3 — EC2, CloudWatch, S3 |
-| API | FastAPI + uvicorn |
-| AI | Anthropic Claude (claude-sonnet-4-6) |
-| RAG | ChromaDB + sentence-transformers |
-| Testing | pytest |
-
----
+|---|---|
+| Language | Python 3.11 |
+| Framework | FastAPI + Uvicorn |
+| Container Registry | AWS ECR |
+| Orchestration | AWS ECS Fargate |
+| Load Balancer | AWS ALB |
+| TLS | AWS ACM |
+| DNS | Namecheap → api.samklin.online |
+| CI/CD | GitHub Actions |
+| Observability | CloudWatch Dashboards + Alarms |
+| Alerting | SNS → Email |
 
 ## Project Structure
 
 ```
-pyops/
+python-devops/
+├── .github/
+│   └── workflows/
+│       └── deploy.yml        # CI/CD pipeline
 ├── infra/
-│   ├── config.py       — config loader (JSON)
-│   ├── instance.py     — EC2Instance class
-│   ├── monitor.py      — InfraMonitor class
-│   ├── reporter.py     — S3Reporter (upload, list, download)
-│   └── __init__.py
-├── tests/
-│   ├── test_instance.py
-│   └── test_monitor.py
-├── runbooks/           — markdown runbooks for RAG
-├── agent.py            — AI agent with tool calling
-├── api.py              — FastAPI REST API
-├── aws_monitor.py      — live AWS monitoring script
-├── rag_pipeline.py     — RAG pipeline (load, index, search)
-├── main.py             — entry point (mock data)
-├── config.json         — environment configuration
+│   ├── task-def.json         # ECS task definition
+│   └── dashboard.json        # CloudWatch dashboard
+├── tests/                    # pytest test suite
+├── api.py                    # FastAPI application
+├── main.py                   # Entry point
+├── Dockerfile                # Container build
+├── requirements.txt          # Python dependencies
 └── README.md
 ```
-
----
-
-## Configuration
-
-`config.json`:
-
-```json
-{
-    "environment": "production",
-    "region": "us-east-1",
-    "instance_type": "t3.micro",
-    "min_replicas": 2,
-    "max_replicas": 10,
-    "alert_threshold": 75,
-    "s3_bucket": "pyops-infra-reports-109804294707"
-}
-```
-
----
-
-## Setup
-
-```bash
-git clone https://github.com/samklin92/pyops.git
-cd pyops
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install boto3 fastapi uvicorn pytest anthropic chromadb sentence-transformers
-aws configure
-```
-
----
-
-## Usage
-
-**Run mock monitor:**
-```bash
-python main.py
-```
-
-**Run live AWS monitor:**
-```bash
-python aws_monitor.py
-```
-
-**Start API:**
-```bash
-uvicorn api:app --reload
-```
-
-**Run agent directly:**
-```bash
-python agent.py
-```
-
-**Run tests:**
-```bash
-pytest
-```
-
----
 
 ## API Endpoints
 
 | Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/` | API status |
-| GET | `/health` | Health check |
-| GET | `/instances` | Live EC2 instances with CPU data |
-| GET | `/reports` | List S3 reports |
-| GET | `/reports/latest` | Fetch latest report content |
-| POST | `/agent/query` | Run AI agent with natural language query |
+|---|---|---|
+| GET | / | Health check — returns API status |
+| GET | /health | Version and status response |
 
-**Example agent query:**
-```bash
-curl -X POST http://localhost:8000/agent/query \
-  -H "Content-Type: application/json" \
-  -d '{"question": "Analyse the current AWS infrastructure in us-east-1 and provide a prioritised remediation plan"}'
+## Live Endpoint
+
+```
+https://api.samklin.online
+https://api.samklin.online/health
 ```
 
----
+## CI/CD Pipeline
 
-## AI Agent Tools
+Every push to `main` triggers:
+1. Docker image build
+2. Image tagged with git SHA and pushed to ECR
+3. ECS service force-redeployed with new image
 
-The agent (`agent.py`) has access to 5 tools:
+## Observability
 
-| Tool | Description |
-|------|-------------|
-| `get_ec2_instances` | Fetch real EC2 instances from AWS |
-| `get_cloudwatch_cpu` | Fetch CPU utilization from CloudWatch |
-| `analyse_instance` | Assess health status per instance |
-| `search_runbooks` | RAG search over operations runbooks |
-| `save_report` | Persist report to S3 |
+- **Dashboard:** CloudWatch — ECS CPU, Memory, ALB request count, 5xx errors
+- **Alarms:**
+  - ECS CPU > 80% for 2 consecutive minutes
+  - ECS Memory > 80% for 2 consecutive minutes
+  - ALB 5xx errors > 5 per minute
+- **Alerting:** SNS topic → email notification
 
-**Agent loop:**
-```
-Instruction → EC2 → CloudWatch → Analyse → Runbooks → S3 Report → Response
-```
+## Infrastructure
 
----
-
-## Learning Roadmap
-
-This project was built as a structured 12-week learning plan across three phases.
-
-### Phase 1 — Python & AWS Foundations (Sessions 1–8)
-
-| Session | Topic | Output |
-|---------|-------|--------|
-| 1 | Python basics — variables, types, control flow | `basics.py` |
-| 2 | Functions, error handling, file I/O | `file_io.py`, `error_test.py` |
-| 3 | OOP — classes, methods, inheritance | `oop_basics.py`, `infra_oop.py` |
-| 4 | Logging and config management | `logger_test.py`, `read_config.py` |
-| 5 | Boto3 — EC2 describe, launch, terminate | `boto3_test.py`, `launch_instance.py`, `terminate_instance.py` |
-| 6 | Boto3 — S3 upload, list, download | `s3_test.py`, `infra/reporter.py` |
-| 7 | Boto3 — CloudWatch metrics | `aws_monitor.py` |
-| 8 | pytest — unit testing the infra package | `tests/` (13 tests) |
-
-### Phase 2 — API & AI Integration (Sessions 9–14)
-
-| Session | Topic | Output |
-|---------|-------|--------|
-| 9 | FastAPI — REST API with EC2 and S3 | `api.py` — `/health`, `/instances`, `/reports` |
-| 10 | LLM basics — Anthropic API, prompt engineering | `llm_test.py`, `llm_ops.py` |
-| 11 | Structured LLM output — JSON responses | `llm_structured.py` |
-| 12 | RAG pipeline — ChromaDB, embeddings, runbook search | `rag_pipeline.py`, `runbooks/` |
-| 13 | AI agent — tool calling, multi-step reasoning | `agent.py` |
-| 14 | FastAPI agent endpoint — HTTP interface to agent | `api.py` — `POST /agent/query` |
-
-### Phase 3 — Production & MLOps (Sessions 15–20) — Planned
-
-| Session | Topic |
-|---------|-------|
-| 15 | Dockerise the API and agent |
-| 16 | Deploy to AWS ECS or EKS |
-| 17 | CI/CD pipeline with GitHub Actions |
-| 18 | Terraform infrastructure for the stack |
-| 19 | Observability — structured logging, metrics, tracing |
-| 20 | Capstone — full production deployment |
-
----
-
-## Capstone Projects
-
-| Phase | Project |
-|-------|---------|
-| Phase 1 | Live AWS infrastructure monitor with S3 reporting |
-| Phase 2 | AI-powered ops agent with FastAPI interface |
-| Phase 3 | Production-deployed AI monitoring platform on AWS |
+- **ECS Cluster:** `pyops-cluster`
+- **ECS Service:** `pyops-api-svc` (Fargate, 1 task, 256 CPU / 512 MB)
+- **ECR Repository:** `pyops-api`
+- **ALB:** `pyops-api-alb` (internet-facing)
+- **Target Group:** `pyops-api-tg` (health check on `/health`)
+- **Certificate:** ACM — `api.samklin.online`
+- **CloudWatch Dashboard:** `pyops-dashboard`
