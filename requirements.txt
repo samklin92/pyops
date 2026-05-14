@@ -7,3 +7,7 @@ uvicorn
 sentence-transformers
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch
+pytest
+httpx
+pytest-asyncio
+moto[ec2,s3,cloudwatch]
