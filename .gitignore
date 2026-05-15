@@ -12,3 +12,8 @@ test_api.py
 # API keys (safety net)
 *secret*
 *credentials*
+
+# Logs & output files
+*.log
+output.txt
+report.txt
