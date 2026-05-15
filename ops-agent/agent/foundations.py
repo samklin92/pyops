@@ -1,19 +1,30 @@
 import anthropic
 import json
 from tools.metrics import query_prometheus, PROMETHEUS_TOOL
+from tools.rag_search import search_runbooks, build_qdrant_client, RAG_SEARCH_TOOL
 
 client = anthropic.Anthropic()
 
-SYSTEM_PROMPT = """
-You are an SRE ops agent. When investigating an alert:
-1. Always query Prometheus metrics first for the affected service
-2. Reason over the returned data
-3. Return a structured RCA in this exact JSON format:
+# Build RAG index once at startup
+print("Building RAG index...")
+qdrant_client = build_qdrant_client()
+print("RAG index ready.\n")
 
+SYSTEM_PROMPT = """
+You are an SRE ops agent investigating infrastructure alerts.
+
+When an alert comes in:
+1. Query Prometheus metrics for the affected service to understand current state
+2. Search runbooks for known issues matching the symptoms
+3. Correlate metrics with runbook findings
+4. Return a structured RCA
+
+Always respond in this exact JSON format:
 {
     "probable_cause": "string",
     "confidence": "high | medium | low",
     "recommended_action": "string",
+    "runbook_reference": "string — which runbook section applies",
     "needs_more_data": boolean
 }
 
@@ -22,10 +33,18 @@ Return only the JSON. No markdown, no explanation.
 
 
 def run_tool(tool_name: str, tool_input: dict) -> str:
-    """Execute the tool the LLM requested and return result as string."""
     if tool_name == "query_prometheus":
         result = query_prometheus(**tool_input)
         return json.dumps(result)
+
+    if tool_name == "search_runbooks":
+        results = search_runbooks(
+            query=tool_input["query"],
+            qdrant_client=qdrant_client,
+            top_k=tool_input.get("top_k", 3)
+        )
+        return json.dumps(results)
+
     raise ValueError(f"Unknown tool: {tool_name}")
 
 
@@ -37,46 +56,40 @@ def investigate_alert(alert_name: str, service: str, severity: str) -> dict:
                 f"Investigate this alert:\n"
                 f"Alert: {alert_name}\n"
                 f"Service: {service}\n"
-                f"Severity: {severity}\n"
-                f"Query the metrics for this service then provide your RCA."
+                f"Severity: {severity}\n\n"
+                f"Query metrics for this service, search runbooks for matching issues, "
+                f"then provide your RCA."
             )
         }
     ]
 
-    # Agentic loop — keeps running until LLM stops calling tools
     while True:
         response = client.messages.create(
             model="claude-opus-4-5",
             max_tokens=1024,
             system=SYSTEM_PROMPT,
-            tools=[PROMETHEUS_TOOL],
+            tools=[PROMETHEUS_TOOL, RAG_SEARCH_TOOL],
             messages=messages
         )
 
-        # LLM wants to call a tool
         if response.stop_reason == "tool_use":
             tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
-
-            # Append full assistant response first
             messages.append({"role": "assistant", "content": response.content})
 
-            # Execute ALL tool calls and collect results
             tool_results = []
-            for tool_use_block in tool_use_blocks:
-                print(f"[tool call] {tool_use_block.name}({tool_use_block.input})")
-                tool_result = run_tool(tool_use_block.name, tool_use_block.input)
-                print(f"[tool result] {tool_result}\n")
+            for block in tool_use_blocks:
+                print(f"[tool call] {block.name}({block.input})")
+                result = run_tool(block.name, block.input)
+                print(f"[tool result] {result[:200]}...\n" if len(result) > 200 else f"[tool result] {result}\n")
 
                 tool_results.append({
                     "type": "tool_result",
-                    "tool_use_id": tool_use_block.id,
-                    "content": tool_result
+                    "tool_use_id": block.id,
+                    "content": result
                 })
 
-            # Return all results in a single user message
             messages.append({"role": "user", "content": tool_results})
 
-        # LLM is done — extract final response
         elif response.stop_reason == "end_turn":
             final_text = next(
                 (b.text for b in response.content if hasattr(b, "text")), ""
@@ -91,9 +104,17 @@ def investigate_alert(alert_name: str, service: str, severity: str) -> dict:
 
 
 if __name__ == "__main__":
-    result = investigate_alert(
-        alert_name="HighErrorRate",
-        service="payments-api",
-        severity="critical"
-    )
-    print(json.dumps(result, indent=2))
+    # Test three different alert scenarios
+    alerts = [
+        ("HighErrorRate", "payments-api", "critical"),
+        ("UnhealthyHosts", "auth-service", "warning"),
+        ("HighLatency", "inventory-api", "critical"),
+    ]
+
+    for alert_name, service, severity in alerts:
+        print(f"{'='*60}")
+        print(f"Alert: {alert_name} | Service: {service} | Severity: {severity}")
+        print(f"{'='*60}")
+        result = investigate_alert(alert_name, service, severity)
+        print(json.dumps(result, indent=2))
+        print()
