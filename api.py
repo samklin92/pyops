@@ -1,12 +1,15 @@
-import boto3
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone, timedelta
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from infra import load_config, S3Reporter
+
+from infra import load_config
+from toolkit import EC2Toolkit, S3Toolkit, MonitorToolkit
 from agent import run_agent
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Infra Monitor API", version="1.0.0")
 
@@ -16,44 +19,12 @@ REGION = os.getenv("AWS_REGION", config["region"])
 
 executor = ThreadPoolExecutor(max_workers=2)
 
-
-def get_cpu_utilization(instance_id, region):
-    cloudwatch = boto3.client("cloudwatch", region_name=region)
-    response = cloudwatch.get_metric_statistics(
-        Namespace="AWS/EC2",
-        MetricName="CPUUtilization",
-        Dimensions=[{"Name": "InstanceId", "Value": instance_id}],
-        StartTime=datetime.now(timezone.utc) - timedelta(minutes=10),
-        EndTime=datetime.now(timezone.utc),
-        Period=300,
-        Statistics=["Average"]
-    )
-    datapoints = response.get("Datapoints", [])
-    if not datapoints:
-        return 0.0
-    latest = sorted(datapoints, key=lambda x: x["Timestamp"])[-1]
-    return round(latest["Average"], 2)
+ec2 = EC2Toolkit(region=REGION)
+s3 = S3Toolkit(bucket_name=BUCKET_NAME, region=REGION)
+monitor = MonitorToolkit(region=REGION)
 
 
-def fetch_ec2_instances(region):
-    ec2 = boto3.client("ec2", region_name=region)
-    response = ec2.describe_instances()
-    instances = []
-    for reservation in response["Reservations"]:
-        for inst in reservation["Instances"]:
-            if inst["State"]["Name"] == "terminated":
-                continue
-            cpu = get_cpu_utilization(inst["InstanceId"], region)
-            instances.append({
-                "id": inst["InstanceId"],
-                "type": inst["InstanceType"],
-                "region": region,
-                "running": inst["State"]["Name"] == "running",
-                "cpu": cpu,
-                "status": "[UP]" if inst["State"]["Name"] == "running" else "[DOWN]"
-            })
-    return instances
-
+# ── Health ───────────────────────────────────────────────
 
 @app.get("/health")
 def health():
@@ -65,18 +36,56 @@ def root():
     return {"message": "Infra Monitor API is running"}
 
 
+# ── Instances ────────────────────────────────────────────
+
 @app.get("/instances")
 def list_instances():
-    instances = fetch_ec2_instances(REGION)
+    instances = ec2.list_instances()
     if not instances:
         raise HTTPException(status_code=404, detail="No instances found")
     return {"region": REGION, "count": len(instances), "instances": instances}
 
 
+@app.get("/instances/running")
+def list_running_instances():
+    instances = ec2.list_running()
+    if not instances:
+        raise HTTPException(status_code=404, detail="No running instances found")
+    return {"region": REGION, "count": len(instances), "instances": instances}
+
+
+@app.get("/instances/{instance_id}")
+def get_instance(instance_id: str):
+    try:
+        instance = ec2.get_instance_state(instance_id)
+        return instance
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"Instance not found: {str(e)}")
+
+
+@app.post("/instances/{instance_id}/stop")
+def stop_instance(instance_id: str):
+    try:
+        result = ec2.stop_instance(instance_id)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to stop instance: {str(e)}")
+
+
+@app.post("/instances/{instance_id}/start")
+def start_instance(instance_id: str):
+    try:
+        result = ec2.start_instance(instance_id)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start instance: {str(e)}")
+
+
+# ── Reports ──────────────────────────────────────────────
+
 @app.get("/reports")
 def list_reports():
-    reporter = S3Reporter(bucket_name=BUCKET_NAME, region=REGION)
-    reports = reporter.list_reports()
+    reports = s3.list_objects(prefix="reports/")
     if not reports:
         raise HTTPException(status_code=404, detail="No reports found")
     return {"count": len(reports), "reports": reports}
@@ -84,14 +93,30 @@ def list_reports():
 
 @app.get("/reports/latest")
 def latest_report():
-    reporter = S3Reporter(bucket_name=BUCKET_NAME, region=REGION)
-    reports = reporter.list_reports()
-    if not reports:
+    report = s3.latest_object(prefix="reports/")
+    if not report:
         raise HTTPException(status_code=404, detail="No reports found")
-    latest = sorted(reports, key=lambda x: x["last_modified"])[-1]
-    content = reporter.download(latest["key"])
-    return {"key": latest["key"], "content": content}
+    content = s3.download(report["key"])
+    return {"key": report["key"], "content": content}
 
+
+# ── Alarms ───────────────────────────────────────────────
+
+@app.get("/alarms")
+def list_alarms():
+    alarms = monitor.list_alarms()
+    if not alarms:
+        raise HTTPException(status_code=404, detail="No alarms found")
+    return {"count": len(alarms), "alarms": alarms}
+
+
+@app.get("/alarms/firing")
+def firing_alarms():
+    alarms = monitor.alarms_in_alarm()
+    return {"count": len(alarms), "alarms": alarms}
+
+
+# ── Agent ────────────────────────────────────────────────
 
 class AgentQuery(BaseModel):
     question: str
@@ -99,14 +124,9 @@ class AgentQuery(BaseModel):
 
 @app.post("/agent/query")
 async def agent_query(payload: AgentQuery):
-    """Run the AI agent with a natural language infrastructure question."""
     try:
         loop = __import__("asyncio").get_event_loop()
-        result = await loop.run_in_executor(
-            executor,
-            run_agent,
-            payload.question
-        )
+        result = await loop.run_in_executor(executor, run_agent, payload.question)
         return {"question": payload.question, "answer": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
