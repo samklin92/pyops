@@ -1,11 +1,14 @@
+.# Environment & secrets
+.env
+*.env
 .venv/
 __pycache__/
 *.pyc
-*.log
-.env
-.aws/
-monitor.log
-app.log
-report.txt
-output.txt
-.pytest_cache/
+
+# Test/temp files
+.coverage
+test_api.py
+
+# API keys (safety net)
+*secret*
+*credentials*
