@@ -2,6 +2,7 @@ import anthropic
 import json
 from tools.metrics import query_prometheus, PROMETHEUS_TOOL
 from tools.rag_search import search_runbooks, build_qdrant_client, RAG_SEARCH_TOOL
+from tools.git_context import get_recent_changes, GIT_CONTEXT_TOOL
 
 client = anthropic.Anthropic()
 
@@ -14,10 +15,10 @@ SYSTEM_PROMPT = """
 You are an SRE ops agent investigating infrastructure alerts.
 
 When an alert comes in:
-1. Query Prometheus metrics for the affected service to understand current state
+1. Query Prometheus metrics for the affected service
 2. Search runbooks for known issues matching the symptoms
-3. Correlate metrics with runbook findings
-4. Return a structured RCA
+3. Check recent git changes for the affected service for deployment correlation
+4. Correlate all three sources and return a structured RCA
 
 Always respond in this exact JSON format:
 {
@@ -25,6 +26,7 @@ Always respond in this exact JSON format:
     "confidence": "high | medium | low",
     "recommended_action": "string",
     "runbook_reference": "string — which runbook section applies",
+    "deployment_correlation": "string — any recent changes that may be related or 'none found'",
     "needs_more_data": boolean
 }
 
@@ -45,6 +47,10 @@ def run_tool(tool_name: str, tool_input: dict) -> str:
         )
         return json.dumps(results)
 
+    if tool_name == "get_recent_changes":
+        result = get_recent_changes(**tool_input)
+        return json.dumps(result)
+
     raise ValueError(f"Unknown tool: {tool_name}")
 
 
@@ -57,7 +63,7 @@ def investigate_alert(alert_name: str, service: str, severity: str) -> dict:
                 f"Alert: {alert_name}\n"
                 f"Service: {service}\n"
                 f"Severity: {severity}\n\n"
-                f"Query metrics for this service, search runbooks for matching issues, "
+                f"Query metrics, search runbooks, check recent git changes, "
                 f"then provide your RCA."
             )
         }
@@ -68,7 +74,7 @@ def investigate_alert(alert_name: str, service: str, severity: str) -> dict:
             model="claude-opus-4-5",
             max_tokens=1024,
             system=SYSTEM_PROMPT,
-            tools=[PROMETHEUS_TOOL, RAG_SEARCH_TOOL],
+            tools=[PROMETHEUS_TOOL, RAG_SEARCH_TOOL, GIT_CONTEXT_TOOL],
             messages=messages
         )
 
@@ -104,7 +110,6 @@ def investigate_alert(alert_name: str, service: str, severity: str) -> dict:
 
 
 if __name__ == "__main__":
-    # Test three different alert scenarios
     alerts = [
         ("HighErrorRate", "payments-api", "critical"),
         ("UnhealthyHosts", "auth-service", "warning"),
