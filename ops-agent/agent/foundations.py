@@ -6,11 +6,6 @@ from tools.git_context import get_recent_changes, GIT_CONTEXT_TOOL
 
 client = anthropic.Anthropic()
 
-# Build RAG index once at startup
-print("Building RAG index...")
-qdrant_client = build_qdrant_client()
-print("RAG index ready.\n")
-
 SYSTEM_PROMPT = """
 You are an SRE ops agent investigating infrastructure alerts.
 
@@ -34,7 +29,7 @@ Return only the JSON. No markdown, no explanation.
 """
 
 
-def run_tool(tool_name: str, tool_input: dict) -> str:
+def run_tool(tool_name: str, tool_input: dict, qdrant_client) -> str:
     if tool_name == "query_prometheus":
         result = query_prometheus(**tool_input)
         return json.dumps(result)
@@ -54,7 +49,16 @@ def run_tool(tool_name: str, tool_input: dict) -> str:
     raise ValueError(f"Unknown tool: {tool_name}")
 
 
-def investigate_alert(alert_name: str, service: str, severity: str) -> dict:
+def investigate_alert(
+    alert_name: str,
+    service: str,
+    severity: str,
+    qdrant_client=None
+) -> dict:
+    # Build local qdrant client if not provided
+    if qdrant_client is None:
+        qdrant_client = build_qdrant_client()
+
     messages = [
         {
             "role": "user",
@@ -85,7 +89,7 @@ def investigate_alert(alert_name: str, service: str, severity: str) -> dict:
             tool_results = []
             for block in tool_use_blocks:
                 print(f"[tool call] {block.name}({block.input})")
-                result = run_tool(block.name, block.input)
+                result = run_tool(block.name, block.input, qdrant_client)
                 print(f"[tool result] {result[:200]}...\n" if len(result) > 200 else f"[tool result] {result}\n")
 
                 tool_results.append({
@@ -110,6 +114,10 @@ def investigate_alert(alert_name: str, service: str, severity: str) -> dict:
 
 
 if __name__ == "__main__":
+    print("Building RAG index...")
+    qdrant = build_qdrant_client()
+    print("RAG index ready.\n")
+
     alerts = [
         ("HighErrorRate", "payments-api", "critical"),
         ("UnhealthyHosts", "auth-service", "warning"),
@@ -120,6 +128,6 @@ if __name__ == "__main__":
         print(f"{'='*60}")
         print(f"Alert: {alert_name} | Service: {service} | Severity: {severity}")
         print(f"{'='*60}")
-        result = investigate_alert(alert_name, service, severity)
+        result = investigate_alert(alert_name, service, severity, qdrant_client=qdrant)
         print(json.dumps(result, indent=2))
         print()
