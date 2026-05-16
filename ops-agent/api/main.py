@@ -1,6 +1,8 @@
 import sys
 import json
 import logging
+import os
+import httpx
 from pathlib import Path
 from fastapi import FastAPI, Request, BackgroundTasks
 from pydantic import BaseModel
@@ -22,11 +24,87 @@ logger.info("Building RAG index...")
 qdrant_client = build_qdrant_client()
 logger.info("RAG index ready.")
 
+SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL")
+
+
+# --- Slack Notification ---
+
+async def notify_slack(alert_name: str, service: str, severity: str, rca: dict):
+    """Post RCA result to Slack #alerts channel."""
+    if not SLACK_WEBHOOK_URL:
+        logger.warning("SLACK_WEBHOOK_URL not set — skipping notification")
+        return
+
+    confidence_emoji = {
+        "high": "🔴",
+        "medium": "🟡",
+        "low": "🟢"
+    }.get(rca.get("confidence", "medium"), "🟡")
+
+    needs_more = "⚠️ Yes" if rca.get("needs_more_data") else "✅ No"
+
+    message = {
+        "blocks": [
+            {
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": f"🚨 opsAgent RCA — {alert_name}"
+                }
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {"type": "mrkdwn", "text": f"*Service:*\n{service}"},
+                    {"type": "mrkdwn", "text": f"*Severity:*\n{severity.upper()}"},
+                    {"type": "mrkdwn", "text": f"*Confidence:*\n{confidence_emoji} {rca.get('confidence', 'unknown').upper()}"},
+                    {"type": "mrkdwn", "text": f"*Needs More Data:*\n{needs_more}"}
+                ]
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*🔍 Probable Cause:*\n{rca.get('probable_cause', 'N/A')}"
+                }
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*🛠️ Recommended Action:*\n{rca.get('recommended_action', 'N/A')}"
+                }
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*📖 Runbook:*\n{rca.get('runbook_reference', 'N/A')}"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*🔀 Deployment Correlation:*\n{rca.get('deployment_correlation', 'none found')}"
+                    }
+                ]
+            },
+            {
+                "type": "divider"
+            }
+        ]
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(SLACK_WEBHOOK_URL, json=message)
+        if response.status_code == 200:
+            logger.info(f"Slack notification sent for {alert_name}")
+        else:
+            logger.error(f"Slack notification failed: {response.status_code} {response.text}")
+
 
 # --- Request/Response Models ---
 
 class AlertPayload(BaseModel):
-    """Direct alert payload for manual queries."""
     alert_name: str
     service: str
     severity: str
@@ -41,56 +119,47 @@ class RCAResponse(BaseModel):
     needs_more_data: bool
 
 
-class SNSNotification(BaseModel):
-    """AWS SNS webhook payload structure."""
-    Type: str
-    TopicArn: str = ""
-    Subject: str = ""
-    Message: str = ""
-    SubscribeURL: str = ""
-
-
 # --- Endpoints ---
 
 @app.get("/health")
 def health():
-    """ALB health check endpoint."""
     return {"status": "healthy", "service": "opsAgent"}
 
 
 @app.post("/investigate", response_model=RCAResponse)
-async def investigate(payload: AlertPayload):
-    """
-    Direct investigation endpoint.
-    Accepts alert name, service, and severity — returns structured RCA.
-    """
+async def investigate(payload: AlertPayload, background_tasks: BackgroundTasks):
     logger.info(f"Investigating alert: {payload.alert_name} | {payload.service} | {payload.severity}")
 
     result = investigate_alert(
         alert_name=payload.alert_name,
         service=payload.service,
-        severity=payload.severity
+        severity=payload.severity,
+        qdrant_client=qdrant_client
     )
 
     logger.info(f"RCA complete: {result.get('probable_cause', '')[:80]}")
+
+    # Send Slack notification in background
+    background_tasks.add_task(
+        notify_slack,
+        alert_name=payload.alert_name,
+        service=payload.service,
+        severity=payload.severity,
+        rca=result
+    )
+
     return result
 
 
 @app.post("/webhook/sns")
 async def sns_webhook(request: Request, background_tasks: BackgroundTasks):
-    """
-    AWS SNS webhook endpoint.
-    Handles CloudWatch Alarm → SNS → opsAgent notification flow.
-    """
     body = await request.json()
     msg_type = body.get("Type", "")
 
-    # SNS subscription confirmation
     if msg_type == "SubscriptionConfirmation":
         logger.info(f"SNS subscription confirmation URL: {body.get('SubscribeURL')}")
         return {"status": "confirm this URL to activate webhook"}
 
-    # Handle actual alarm notification
     if msg_type == "Notification":
         raw_message = body.get("Message", "{}")
 
@@ -99,20 +168,15 @@ async def sns_webhook(request: Request, background_tasks: BackgroundTasks):
         except json.JSONDecodeError:
             message = {"detail": raw_message}
 
-        # Parse CloudWatch alarm structure
         alarm_name = message.get("AlarmName", "UnknownAlarm")
-        alarm_desc = message.get("AlarmDescription", "")
         new_state = message.get("NewStateValue", "ALARM")
 
-        # Extract service name from alarm name or description
-        # Convention: alarm name format is "ServiceName-AlertType"
         parts = alarm_name.split("-")
         service = parts[0].lower() if parts else "unknown"
         severity = "critical" if new_state == "ALARM" else "warning"
 
         logger.info(f"SNS alarm received: {alarm_name} | service: {service} | state: {new_state}")
 
-        # Run investigation in background so SNS gets fast 200 response
         background_tasks.add_task(
             run_investigation,
             alert_name=alarm_name,
@@ -126,16 +190,15 @@ async def sns_webhook(request: Request, background_tasks: BackgroundTasks):
 
 
 async def run_investigation(alert_name: str, service: str, severity: str):
-    """Background task — runs agent investigation and logs result."""
     try:
         result = investigate_alert(
             alert_name=alert_name,
             service=service,
-            severity=severity
+            severity=severity,
+            qdrant_client=qdrant_client
         )
-        logger.info(f"Background RCA complete for {alert_name}:")
-        logger.info(json.dumps(result, indent=2))
-        # Week 11: replace logger with Slack notification here
+        logger.info(f"Background RCA complete for {alert_name}")
+        await notify_slack(alert_name, service, severity, result)
     except Exception as e:
         logger.error(f"Investigation failed for {alert_name}: {e}")
 
