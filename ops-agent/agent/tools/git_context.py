@@ -2,15 +2,26 @@ import os
 from datetime import datetime, timezone, timedelta
 from github import Github, Auth
 
-# Initialize GitHub client
-auth = Auth.Token(os.getenv("GITHUB_TOKEN").strip())
-github_client = Github(auth=auth)
+# Initialize GitHub client safely
+_token = os.getenv("GITHUB_TOKEN", "").strip()
+auth = Auth.Token(_token) if _token else None
+github_client = Github(auth=auth) if auth else None
 
 REPO_NAME = "samklin92/pyops"
 
 
 def get_recent_changes(service: str, hours_back: int = 24) -> dict:
-    """..."""
+    """
+    Fetch recent commits and PRs for a given service from GitHub.
+    """
+    if not github_client:
+        return {
+            "service": service,
+            "error": "GITHUB_TOKEN not set",
+            "recent_commits": [],
+            "recent_prs": []
+        }
+
     try:
         repo = github_client.get_repo(REPO_NAME)
         since = datetime.now(timezone.utc) - timedelta(hours=hours_back)

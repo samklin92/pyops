@@ -1,5 +1,5 @@
 from pathlib import Path
-from sentence_transformers import SentenceTransformer
+from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -9,11 +9,11 @@ COLLECTION_NAME = "ops_runbooks"
 EMBEDDING_DIM = 384
 CORPUS_DIR = Path(__file__).parent.parent.parent / "rag" / "corpus"
 
-model = SentenceTransformer("all-MiniLM-L6-v2")
+embedding_model = TextEmbedding("BAAI/bge-small-en-v1.5")
 
 
 def embed(texts: list[str]) -> list[list[float]]:
-    return model.encode(texts, show_progress_bar=False).tolist()
+    return [list(vec) for vec in embedding_model.embed(texts)]
 
 
 def build_qdrant_client() -> QdrantClient:

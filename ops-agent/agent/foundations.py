@@ -1,7 +1,15 @@
 import anthropic
 import json
+
+# Use fastembed in container, sentence-transformers locally
+try:
+    from tools.rag_search_container import search_runbooks, build_qdrant_client, RAG_SEARCH_TOOL
+    print("Using fastembed for embeddings")
+except ImportError:
+    from tools.rag_search import search_runbooks, build_qdrant_client, RAG_SEARCH_TOOL
+    print("Using sentence-transformers for embeddings")
+
 from tools.metrics import query_prometheus, PROMETHEUS_TOOL
-from tools.rag_search import search_runbooks, build_qdrant_client, RAG_SEARCH_TOOL
 from tools.git_context import get_recent_changes, GIT_CONTEXT_TOOL
 
 client = anthropic.Anthropic()
@@ -55,7 +63,6 @@ def investigate_alert(
     severity: str,
     qdrant_client=None
 ) -> dict:
-    # Build local qdrant client if not provided
     if qdrant_client is None:
         qdrant_client = build_qdrant_client()
 
@@ -115,19 +122,4 @@ def investigate_alert(
 
 if __name__ == "__main__":
     print("Building RAG index...")
-    qdrant = build_qdrant_client()
-    print("RAG index ready.\n")
-
-    alerts = [
-        ("HighErrorRate", "payments-api", "critical"),
-        ("UnhealthyHosts", "auth-service", "warning"),
-        ("HighLatency", "inventory-api", "critical"),
-    ]
-
-    for alert_name, service, severity in alerts:
-        print(f"{'='*60}")
-        print(f"Alert: {alert_name} | Service: {service} | Severity: {severity}")
-        print(f"{'='*60}")
-        result = investigate_alert(alert_name, service, severity, qdrant_client=qdrant)
-        print(json.dumps(result, indent=2))
-        print()
+    qdra

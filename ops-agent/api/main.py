@@ -11,7 +11,12 @@ from pydantic import BaseModel
 sys.path.append(str(Path(__file__).parent.parent / "agent"))
 
 from foundations import investigate_alert
-from tools.rag_search import build_qdrant_client
+
+# Use fastembed in container, sentence-transformers locally
+try:
+    from tools.rag_search_container import build_qdrant_client
+except ImportError:
+    from tools.rag_search import build_qdrant_client
 
 # Logging
 logging.basicConfig(level=logging.INFO)
@@ -94,7 +99,7 @@ async def notify_slack(alert_name: str, service: str, severity: str, rca: dict):
         ]
     }
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(follow_redirects=True) as client:
         response = await client.post(SLACK_WEBHOOK_URL, json=message)
         if response.status_code == 200:
             logger.info(f"Slack notification sent for {alert_name}")
@@ -139,7 +144,6 @@ async def investigate(payload: AlertPayload, background_tasks: BackgroundTasks):
 
     logger.info(f"RCA complete: {result.get('probable_cause', '')[:80]}")
 
-    # Send Slack notification in background
     background_tasks.add_task(
         notify_slack,
         alert_name=payload.alert_name,
